@@ -1,0 +1,31 @@
+{
+  "items": [
+    {
+      "name": "Union Square's Free Outdoor Movie Night: 'KPop Demon Hunters' Sing-Along",
+      "category": "Event",
+      "neighborhood": "Union Square",
+      "description": "A free outdoor movie night featuring a sing-along screening of the KPop Demon Hunters film, with pre-show entertainment and activities starting at 4:00 pm.",
+      "date_or_hours": "Saturday, June 20, 2026 - 4:00 pm to 10:00 pm",
+      "image_url": "https://www.funcheap.com/your-favorite-movies-and-tv-shows-under-the-stars-at-union-square/",
+      "url": "https://sf.funcheap.com/union-squares-kpop-demon-hunters-sing-along-under-the-stars/"
+    },
+    {
+      "name": "SF Comedy Legends 'The Sklar Brothers' Live at Cobb's Comedy Club",
+      "category": "Event",
+      "neighborhood": "Cobb's Comedy Club",
+      "description": "Join us for a weekend full of nonstop laughs with The Sklar Brothers at Cobb's Comedy Club.  All shows are $34.05 and start at 7:00 pm.",
+      "date_or_hours": "Saturday, June 20 - 7:00 pm - 11:45 pm",
+      "image_url": "https://www.funcheap.com/the-sklar-brothers-at-cobbs-comedy-club/",
+      "url": "https://sf.funcheap.com/sf-comedy-legends-the-sklar-brothers-live-at-cobbs-comedy-club-june-19-20/"
+    },
+    {
+      "name": "Golden Gate Comedy Night",
+      "category": "Event",
+      "neighborhood": "The Function",
+      "description": "See top comics you'd normally see at Punch Line, Cobbs and SF Sketchfest up close at intimate comedy club in the heart of downtown SF. Looking for a real San Francisco comedy experience? Golden Gate Comedy Night is your go-to show - a sharp, fast-moving showcase of the Bay Area's funniest comedians.",
+      "date_or_hours": "Saturday, June 20 - 7:00 pm - 10:30 pm",
+      "image_url": "https://www.funcheap.com/golden-gate-comedy-night/",
+      "url": "https://sf.funcheap.com/golden-gate-comedy-night-sfs-most-intimate-comedy-club-48/"
+    }
+  ]
+}
