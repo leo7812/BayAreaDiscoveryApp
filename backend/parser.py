@@ -1,5 +1,8 @@
 import json
 import requests
+import re
+from bs4 import BeautifulSoup
+from urllib.parse import urljoin, urlparse
 from pydantic import BaseModel, Field
 from typing import List, Optional, Literal
 
@@ -95,6 +98,222 @@ def parse_detail_text_to_json(raw_scraped_text: str) -> dict:
     except Exception as e:
         print(f"Error parsing event details: {e}")
         return {}
+
+def parse_index_with_selectors(url: str, html: str) -> dict:
+    """Dispatches page parsing to site-specific CSS selector engines."""
+    parsed_url = urlparse(url)
+    domain = parsed_url.netloc.lower()
+    
+    items = []
+    
+    if "funcheap.com" in domain:
+        items = _parse_funcheap_index(html)
+    elif "secretsanfrancisco.com" in domain:
+        items = _parse_secretsf_index(html)
+    elif "dothebay.com" in domain:
+        items = _parse_dothebay_index(html)
+        
+    return {"items": items}
+
+def parse_detail_with_selectors(url: str, html: str) -> dict:
+    """Extracts description, neighborhood/venue, and date details from known domains."""
+    soup = BeautifulSoup(html, "html.parser")
+    parsed_url = urlparse(url)
+    domain = parsed_url.netloc.lower()
+    
+    description = ""
+    neighborhood = ""
+    date_or_hours = ""
+    
+    if "funcheap.com" in domain:
+        entry = soup.find(class_="entry")
+        if entry:
+            p_texts = [p.text.strip() for p in entry.find_all("p") if p.text.strip()]
+            clean_p = [p for p in p_texts if not any(w in p.lower() for w in ["email list", "newsletter", "subscribe", "funcheap", "sponsor"])]
+            description = " ".join(clean_p[:2])
+            
+        details = []
+        for tag in soup.find_all(['p', 'span', 'li', 'td', 'tr', 'strong']):
+            text = tag.get_text().strip()
+            if any(text.startswith(prefix) for prefix in ["Date:", "Time:", "Cost:", "Venue:"]):
+                details.append(text)
+        if details:
+            date_or_hours = " | ".join(list(dict.fromkeys(details))[:3])
+            
+    elif "secretsanfrancisco.com" in domain:
+        content = soup.find(class_="smn-post-content") or soup.find("article")
+        if content:
+            p_texts = [p.text.strip() for p in content.find_all("p") if p.text.strip()]
+            clean_p = [p for p in p_texts if len(p) > 20]
+            description = " ".join(clean_p[:2])
+            
+    elif "dothebay.com" in domain:
+        desc_div = soup.find(class_="ds-event-description")
+        if desc_div:
+            description = desc_div.text.strip()
+            lines = [l.strip() for l in description.splitlines() if l.strip()]
+            if len(lines) > 2:
+                description = " ".join(lines[:3])
+                
+        venue_div = soup.find(class_="ds-venue-name")
+        if venue_div:
+            neighborhood = venue_div.text.strip()
+            
+        time_span = soup.find(class_="ds-event-time")
+        if time_span:
+            date_or_hours = time_span.text.strip()
+            
+    return {
+        "description": description[:300] if description else None,
+        "neighborhood": neighborhood if neighborhood else None,
+        "date_or_hours": date_or_hours if date_or_hours else None
+    }
+
+def _parse_funcheap_index(html: str) -> list:
+    soup = BeautifulSoup(html, "html.parser")
+    items = []
+    for card in soup.find_all("div", class_="onecolumn"):
+        title_tag = card.find("span", class_="entry-title")
+        if not title_tag:
+            continue
+        a_tag = title_tag.find("a")
+        if not a_tag:
+            continue
+            
+        name = a_tag.text.strip()
+        url = a_tag.get("href")
+        
+        img_url = ""
+        noscript = card.find("noscript")
+        if noscript:
+            img_tag = noscript.find("img")
+            if img_tag:
+                img_url = img_tag.get("src")
+        if not img_url:
+            img_tag = card.find("img")
+            if img_tag:
+                img_url = img_tag.get("src")
+                if img_url and img_url.startswith("data:image"):
+                    img_url = img_tag.get("data-u") or ""
+                    
+        category = "Event"
+        cat_tag = card.find("span", class_="blog-category")
+        tags_text = cat_tag.text.strip() if cat_tag else ""
+        combined_text = (name + " " + tags_text).lower()
+        if any(w in combined_text for w in ["food", "eat", "drink", "sushi", "bakery", "restaurant", "brewery", "tasty"]):
+            category = "Food"
+        elif any(w in combined_text for w in ["view", "park", "garden", "hike", "beach", "scenic", "sunset", "rooftop"]):
+            category = "View"
+            
+        desc_span = card.find("span", style="color:black;")
+        description = desc_span.text.strip() if desc_span else ""
+        
+        items.append({
+            "name": name,
+            "category": category,
+            "neighborhood": "San Francisco",
+            "description": description or f"A local {category.lower()} worth exploring in the Bay Area.",
+            "date_or_hours": "",
+            "image_url": img_url,
+            "url": url,
+            "is_enriched": False
+        })
+    return items
+
+def _parse_secretsf_index(html: str) -> list:
+    soup = BeautifulSoup(html, "html.parser")
+    items = []
+    for article in soup.find_all("article", class_="smn-post-list-item"):
+        title_tag = article.find("h2", class_="smn-post-list-item-info__title")
+        if not title_tag:
+            continue
+        a_tag = title_tag.find("a")
+        if not a_tag:
+            continue
+            
+        name = a_tag.text.strip()
+        url = a_tag.get("href")
+        
+        img_url = ""
+        img_tag = article.find("img")
+        if img_tag:
+            img_url = img_tag.get("src") or img_tag.get("data-src") or ""
+            
+        category = "Event"
+        cat_links = article.find_all("a", class_="smn-post-list-item-categories__link")
+        cats_text = " ".join([c.text.strip() for c in cat_links])
+        combined_text = (name + " " + cats_text).lower()
+        if any(w in combined_text for w in ["food", "eat", "drink", "restaurant", "bar", "cafe", "dining", "cocktail"]):
+            category = "Food"
+        elif any(w in combined_text for w in ["view", "scenic", "hike", "nature", "park", "garden", "rooftop", "beach"]):
+            category = "View"
+            
+        items.append({
+            "name": name,
+            "category": category,
+            "neighborhood": "San Francisco",
+            "description": f"Explore this exciting {category.lower()} in San Francisco.",
+            "date_or_hours": "",
+            "image_url": img_url,
+            "url": url,
+            "is_enriched": False
+        })
+    return items
+
+def _parse_dothebay_index(html: str) -> list:
+    soup = BeautifulSoup(html, "html.parser")
+    items = []
+    for card in soup.find_all(class_="event-card"):
+        title_tag = card.find("a", class_="ds-listing-event-title")
+        if not title_tag:
+            continue
+        url_path = title_tag.get("href")
+        url = urljoin("https://dothebay.com", url_path)
+        
+        title_span = card.find(class_="ds-listing-event-title-text")
+        name = title_span.text.strip() if title_span else "Local Event"
+        
+        img_url = ""
+        img_div = card.find(class_="ds-cover-image")
+        if img_div and img_div.get("style"):
+            style = img_div["style"]
+            match = re.search(r"url\(['\"]?(https?://[^'\")]+)['\"]?\)", style)
+            if match:
+                img_url = match.group(1)
+                
+        venue_span = card.find(class_="ds-venue-name")
+        venue_name = venue_span.text.strip() if venue_span else ""
+        neighborhood = "San Francisco"
+        meta_loc = card.find("meta", itemprop="addressLocality")
+        if meta_loc and meta_loc.get("content"):
+            neighborhood = meta_loc["content"].strip()
+        elif venue_name:
+            neighborhood = venue_name
+            
+        category = "Event"
+        classes = " ".join(card.get("class", []))
+        if "food" in classes or "drink" in classes:
+            category = "Food"
+        elif "park" in classes or "view" in classes or "outdoor" in classes:
+            category = "View"
+            
+        date_series = card.find(class_="ds-listing-series")
+        date_text = date_series.text.strip() if date_series else ""
+        time_div = card.find(class_="ds-event-time")
+        time_text = time_div.text.strip() if time_div else ""
+        date_or_hours = f"{date_text} {time_text}".strip()
+        
+        items.append({
+            "name": name,
+            "category": category,
+            "neighborhood": neighborhood,
+            "description": f"Check out {name} at {venue_name or 'the venue'}.",
+            "date_or_hours": date_or_hours,
+            "image_url": img_url,
+            "url": url,
+            "is_enriched": False
+        })
+    return items
 
 # Testing the workflow
 if __name__ == "__main__":

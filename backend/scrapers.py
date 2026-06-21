@@ -30,6 +30,7 @@ def parse_html_to_text(html_content: str, url: str) -> dict:
     clean_lines = [line.strip() for line in text_content.splitlines() if line.strip()]
     
     return {
+        "html": html_content,
         "text": "\n".join(clean_lines),
         "image_url": image_url
     }

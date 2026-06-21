@@ -10,7 +10,14 @@ from fastapi.middleware.cors import CORSMiddleware
 
 # Import local modules
 from scrapers import scrape_bay_area_page
-from parser import parse_text_to_json, parse_detail_text_to_json, LocalDiscovery, DiscoveryList
+from parser import (
+    parse_text_to_json,
+    parse_detail_text_to_json,
+    parse_index_with_selectors,
+    parse_detail_with_selectors,
+    LocalDiscovery,
+    DiscoveryList
+)
 
 # Initialize FastAPI application
 app = FastAPI(
@@ -171,16 +178,25 @@ async def enrich_discovery_item_from_detail(item: dict, browser=None) -> dict:
     print(f"🔗 Hop 2: Scraping detail page: {url}...")
     try:
         scraped_data = await scrape_bay_area_page(url, browser=browser)
-        if scraped_data and scraped_data.get("text"):
+        if scraped_data:
             # Detail page images are usually higher quality banners
             detail_image = scraped_data.get("image_url")
             if detail_image:
                 item["image_url"] = detail_image
                 
-            # Run structured LLM parsing on detail page text
-            loop = asyncio.get_running_loop()
-            detail_data = await loop.run_in_executor(None, parse_detail_text_to_json, scraped_data["text"])
+            # Run structured parsing (code-based selectors or LLM fallback)
+            from urllib.parse import urlparse
+            domain = urlparse(url).netloc.lower()
             
+            detail_data = None
+            if any(k in domain for k in ["funcheap.com", "secretsanfrancisco.com", "dothebay.com"]) and scraped_data.get("html"):
+                print(f"🧩 Enriching details with BeautifulSoup selectors for: {url}...")
+                detail_data = parse_detail_with_selectors(url, scraped_data["html"])
+            elif scraped_data.get("text"):
+                print(f"🤖 Falling back to LLM details parsing for: {url}...")
+                loop = asyncio.get_running_loop()
+                detail_data = await loop.run_in_executor(None, parse_detail_text_to_json, scraped_data["text"])
+                
             if detail_data:
                 # Enrich neighborhood, description, and hours if present
                 for field in ["description", "neighborhood", "date_or_hours"]:
@@ -320,14 +336,21 @@ async def scrape_and_extract(request: ScrapeRequest):
             detail="Failed to retrieve readable content from the provided URL."
         )
         
-    # 2. Run structured LLM extraction in a thread pool to avoid blocking the event loop
+    # 2. Extract structured list using hybrid parser (Code-based selectors or LLM fallback)
     try:
-        loop = asyncio.get_running_loop()
-        structured_data = await loop.run_in_executor(None, parse_text_to_json, scraped_data["text"])
+        from urllib.parse import urlparse
+        domain = urlparse(url).netloc.lower()
+        if any(k in domain for k in ["funcheap.com", "secretsanfrancisco.com", "dothebay.com"]):
+            print(f"🧩 Parsing index with BeautifulSoup selectors: {url}...")
+            structured_data = parse_index_with_selectors(url, scraped_data["html"])
+        else:
+            print(f"🤖 Falling back to LLM index parsing: {url}...")
+            loop = asyncio.get_running_loop()
+            structured_data = await loop.run_in_executor(None, parse_text_to_json, scraped_data["text"])
     except Exception as e:
         raise HTTPException(
             status_code=500, 
-            detail=f"LLM extraction engine failed: {str(e)}"
+            detail=f"Extraction engine failed: {str(e)}"
         )
         
     # 3. Deduplicate, enrich from detail pages (Hop 2), and save
@@ -391,7 +414,7 @@ async def background_scrape_all():
             print("❌ Background scrape failed: No readable content found on any source site.")
             return
             
-        # 2. Run LLM extraction sequentially
+        # 2. Run extraction (Code-based selectors with LLM fallback)
         db = load_discoveries()
         existing_names = {item["name"].lower().strip() for item in db["items"]}
         
@@ -399,15 +422,24 @@ async def background_scrape_all():
         new_items_added = 0
         
         for idx, res in enumerate(valid_results):
+            url = DEFAULT_SCRAPE_URLS[idx]
+            from urllib.parse import urlparse
+            domain = urlparse(url).netloc.lower()
             source_new_added = 0
             try:
-                structured_data = await loop.run_in_executor(None, parse_text_to_json, res["text"])
+                if any(k in domain for k in ["funcheap.com", "secretsanfrancisco.com", "dothebay.com"]):
+                    print(f"🧩 Background parsing index with BeautifulSoup selectors: {url}...")
+                    structured_data = parse_index_with_selectors(url, res["html"])
+                else:
+                    print(f"🤖 Background falling back to LLM index parsing: {url}...")
+                    structured_data = await loop.run_in_executor(None, parse_text_to_json, res["text"])
+                
                 for item in structured_data.get("items", []):
                     if item.get("name"):
                         clean_name = item["name"].strip()
                         if clean_name.lower() not in existing_names:
                             # Pre-sanitize basic fields first
-                            item["image_url"] = res.get("image_url")
+                            item["image_url"] = item.get("image_url") or res.get("image_url")
                             item = clean_discovery_item(item)
                             
                             # Append to database immediately as placeholder (not enriched yet)
